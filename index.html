@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mobile UNO</title>
+<style>
+  :root{
+    --card-w:84px; --card-h:120px;
+    --gap:10px; --bg:#faf8f3; --accent:#222;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;}
+  .wrap{max-width:900px;margin:10px auto;padding:8px;}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  header h1{font-size:28px;margin:0;color:var(--accent)}
+  .controls{display:flex;gap:8px;flex-wrap:wrap}
+  button{background:#fff;border:1px solid #bbb;padding:8px 10px;border-radius:6px;font-weight:600}
+  button.primary{background:#222;color:#fff;border-color:#222}
+  .topline{display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .board{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start}
+  .pile{display:flex;flex-direction:column;gap:8px;align-items:center}
+  .card{width:var(--card-w);height:var(--card-h);border-radius:8px;box-shadow:0 3px 0 rgba(0,0,0,.08);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:#fff}
+  .card.small{width:56px;height:80px;font-size:14px}
+  .red{background:#d9534f} .blue{background:#337ab7} .green{background:#5cb85c} .yellow{background:#f0ad4e} .black{background:#222}
+  .hand{display:flex;gap:8px;overflow:auto;padding:8px 0 12px}
+  .hand .card{flex:0 0 auto;cursor:pointer;transform:translateY(0);transition:transform .12s}
+  .hand .card:active{transform:translateY(-6px)}
+  .status{margin:8px 0;color:#222}
+  .choose{display:flex;gap:8px;margin:6px 0}
+  .log{background:#fff;padding:8px;border-radius:8px;border:1px solid #eee;margin-top:8px;color:#333;font-size:14px}
+  .footer{margin-top:14px;color:#444;font-size:13px}
+  .muted{color:#666;font-size:13px}
+  /* responsive */
+  @media (max-width:420px){
+    :root{--card-w:68px;--card-h:96px}
+    header h1{font-size:22px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div style="width:44px;height:44px;border-radius:10px;background:#222;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700">UNO</div>
+    <h1>MOBILE UNO</h1>
+  </header>
+
+  <div class="topline">
+    <div class="controls">
+      <button id="newBtn" class="primary">▶ New Game</button>
+      <button id="drawBtn">✋ DRAW</button>
+      <button id="unoBtn">! UNO !</button>
+    </div>
+    <div style="margin-left:auto" class="muted" id="turnInfo">Loading...</div>
+  </div>
+
+  <div class="board">
+    <div class="pile">
+      <div id="deck" class="card small black" title="Deck">Deck</div>
+      <div id="discard" class="card small" style="visibility:hidden">—</div>
+      <div style="font-size:13px;color:#333;margin-top:6px" id="counts">Deck: -</div>
+    </div>
+
+    <div style="flex:1">
+      <div style="margin-bottom:8px" class="muted">Opponent A</div>
+      <div id="ai1" class="hand"></div>
+
+      <div style="margin:8px 0" class="status" id="statusText">Game ready. Click New Game.</div>
+
+      <div style="margin-top:6px" class="muted">Your Hand</div>
+      <div id="playerHand" class="hand"></div>
+
+      <div style="margin-top:8px">
+        <div class="muted">Choose color (for Wild)</div>
+        <div class="choose">
+          <button data-color="red" class="colorBtn">● Red</button>
+          <button data-color="blue" class="colorBtn">● Blue</button>
+          <button data-color="green" class="colorBtn">● Green</button>
+          <button data-color="yellow" class="colorBtn">● Yellow</button>
+        </div>
+      </div>
+
+      <div class="log" id="log">Welcome — press New Game to start.</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="muted">Simple offline UNO — built to run in single file. Tap cards to play. AI is basic.</div>
+  </div>
+</div>
+
+<script>
+/*
+ Minimal single-file UNO implementation
+ - Deck builder (0-9 + skip/reverse/draw2 + wild/wild4)
+ - Deal 3 players (human index 0)
+ - Basic playable rules: match color or value, wilds
+ - Action effects: skip, reverse (works for 3 players), draw2, wild4 forces draws
+ - AI: easy => play first playable otherwise draw
+ - UI: inline DOM render
+*/
+
+(function(){
+  // helpers
+  const $ = id=>document.getElementById(id);
+  const log = txt=>{ const l=$('log'); l.innerText = txt + "\n\n" + l.innerText; };
+
+  // build deck
+  function makeDeck(){
+    const colors=['red','blue','green','yellow'];
+    const deck=[];
+    colors.forEach(c=>{
+      deck.push({c,v:0});
+      for(let i=1;i<=9;i++){ deck.push({c,v:String(i)}); deck.push({c,v:String(i)}); }
+      deck.push({c,v:'skip'}); deck.push({c,v:'skip'});
+      deck.push({c,v:'reverse'}); deck.push({c,v:'reverse'});
+      deck.push({c,v:'draw2'}); deck.push({c,v:'draw2'});
+    });
+    for(let i=0;i<4;i++){ deck.push({c:'black',v:'wild'}); deck.push({c:'black',v:'wild4'}); }
+    return deck;
+  }
+  function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+  // game state
+  let state = {
+    deck:[], discard:[], hands:[[],[],[]],
+    current:0, dir:1, currentColor:null, scores:[0,0,0],
+    waitingForColor:false, gameOver:false
+  };
+
+  function newGame(){
+    state.deck = shuffle(makeDeck());
+    state.discard = [];
+    state.hands = [[],[],[]];
+    state.current = 0; state.dir=1; state.currentColor=null; state.waitingForColor=false; state.gameOver=false;
+    // deal 7
+    for(let r=0;r<7;r++) for(let p=0;p<3;p++) state.hands[p].push(state.deck.pop());
+    // start discard until not wild4
+    let top=state.deck.pop();
+    while(top.v==='wild4'){ state.deck.unshift(top); top=state.deck.pop(); }
+    state.discard.push(top);
+    state.currentColor = (top.c==='black'?null:top.c);
+    log("New game. Top: " + cardText(top));
+    renderAll();
+  }
+
+  function cardText(card){ if(!card) return '—'; return (card.c==='black'?card.v.toUpperCase():card.v + ' ' + card.c); }
+
+  function isPlayable(card, top){
+    if(!card) return false;
+    if(card.c==='black') return true;
+    if(top.c==='black'){
+      // when top is wild, match currentColor
+      return card.c===state.currentColor || String(card.v)===String(top.v);
+    }
+    return card.c===top.c || String(card.v)===String(top.v);
+  }
+
+  // UI rendering
+  function renderAll(){
+    // deck/discard
+    $('counts').innerText = 'Deck: ' + state.deck.length + '  Discard: ' + state.discard.length;
+    const top = state.discard[state.discard.length-1];
+    const disc = $('discard');
+    if(top){ disc.style.visibility='visible'; disc.innerText = (top.c==='black'? top.v.toUpperCase() : top.v); disc.className='card small ' + (top.c==='black'? 'black' : top.c); }
+    else { disc.style.visibility='hidden'; }
+    // hands
+    renderHand($('playerHand'), state.hands[0], true);
+    renderHand($('ai1'), state.hands[1], false, true); // AI1 shown as face-down count
+    // status
+    $('turnInfo').innerText = `Turn: ${playerName(state.current)} • ${state.currentColor?('Color: '+state.currentColor):'Color: any'}`;
+    $('statusText').innerText = state.gameOver ? 'Game over' : 'Game in progress';
+  }
+
+  function playerName(idx){ return idx===0 ? 'You' : ('AI ' + idx); }
+
+  function renderHand(container, hand, clickable=false, hide=false){
+    container.innerHTML='';
+    if(hide){
+      // show placeholder backs
+      const back = document.createElement('div'); back.className='card small black'; back.innerText = (hand.length + ' cards');
+      container.appendChild(back); return;
+    }
+    hand.forEach((card,i)=>{
+      const d=document.createElement('div');
+      d.className = 'card ' + (card.c==='black'?'black':card.c);
+      d.innerText = (card.c==='black'? card.v.toUpperCase() : card.v);
+      d.onclick = ()=>{ if(clickable) playerPlay(i); };
+      container.appendChild(d);
+    });
+  }
+
+  // play card (player)
+  function playerPlay(index){
+    if(state.gameOver) return;
+    if(state.current!==0){ log('Not your turn'); return; }
+    const hand = state.hands[0]; const card = hand[index];
+    const top = state.discard[state.discard.length-1];
+    if(!isPlayable(card, top)){ log('Card not playable'); return; }
+    // play
+    hand.splice(index,1);
+    state.discard.push(card);
+    if(card.c==='black'){
+      // require color selection - wait for user
+      state.waitingForColor = true;
+      log('Played ' + cardText(card) + '. Choose color.');
+      renderAll();
+      return;
+    } else {
+      state.currentColor = card.c;
+      resolveAction(card);
+    }
+    afterPlayAdvance();
+  }
+
+  function resolveAction(card){
+    log('Played ' + cardText(card));
+    if(card.v==='skip'){ state.current = (state.current + state.dir + 3) %3; log('Skip applied'); }
+    else if(card.v==='reverse'){ state.dir *= -1; log('Reverse'); }
+    else if(card.v==='draw2'){
+      const nxt = (state.current+state.dir+3)%3;
+      drawToPlayer(nxt,2);
+      log('Draw 2 to ' + playerName(nxt));
+    } else if(card.v==='wild4'){
+      const nxt = (state.current+state.dir+3)%3;
+      drawToPlayer(nxt,4);
+      log('Wild4: ' + playerName(nxt) + ' draws 4');
+    }
+  }
+
+  function afterPlayAdvance(){
+    // check UNO
+    if(state.hands[0].length===1) log('You have 1 card — press UNO!');
+    if(state.hands[0].length===0) { gameFinish(0); return; }
+    // if waitingForColor was set earlier, return (color must be selected first)
+    if(state.waitingForColor) return;
+    // advance
+    state.current = (state.current + state.dir + 3) %3;
+    renderAll();
+    if(state.current!==0) setTimeout(aiTurn,600);
+  }
+
+  function aiTurn(){
+    if(state.gameOver) return;
+    const ai = state.current;
+    log('AI ' + ai + ' thinking...');
+    const hand = state.hands[ai];
+    const top = state.discard[state.discard.length-1];
+    let played=false;
+    for(let i=0;i<hand.length;i++){
+      if(isPlayable(hand[i], top)){
+        const card = hand.splice(i,1)[0];
+        state.discard.push(card);
+        state.currentColor = (card.c==='black'? (['red','blue','green','yellow'][Math.floor(Math.random()*4)]) : card.c);
+        log('AI ' + ai + ' played ' + cardText(card));
+        resolveAction(card);
+        played=true;
+        break;
+      }
+    }
+    if(!played){
+      // draw one
+      drawToPlayer(ai,1);
+      log('AI ' + ai + ' drew a card');
+    }
+    if(state.hands[ai].length===0){ gameFinish(ai); return; }
+    // advance
+    state.current = (state.current + state.dir + 3)%3;
+    renderAll();
+    if(state.current===0) { log("Your turn"); }
+    else setTimeout(aiTurn,700);
+  }
+
+  function drawToPlayer(player,count){
+    for(let k=0;k<count;k++){
+      if(state.deck.length===0) refillFromDiscard();
+      const c = state.deck.pop();
+      state.hands[player].push(c);
+    }
+  }
+
+  function refillFromDiscard(){
+    if(state.discard.length<=1) return;
+    const top = state.discard.pop();
+    state.deck = shuffle(state.discard);
+    state.discard = [top];
+    log('Refilled deck from discard');
+  }
+
+  function playerDraw(){
+    if(state.current!==0){ log('Not your turn'); return; }
+    drawToPlayer(0,1);
+    log('You drew a card');
+    // after drawing, end turn
+    state.current = (state.current + state.dir + 3)%3;
+    renderAll();
+    if(state.current!==0) setTimeout(aiTurn,600);
+  }
+
+  // color selection for wilds
+  document.querySelectorAll('.colorBtn').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const color = b.dataset.color;
+      if(!state.waitingForColor){ log('No wild pending'); return; }
+      state.currentColor = color;
+      state.waitingForColor = false;
+      log('Chosen color: ' + color);
+      // if the last played was wild4, its effect already applied on play (handled earlier)
+      // after choosing color, advance or let action resolve then advance:
+      const top = state.discard[state.discard.length-1];
+      resolveAction(top);
+      afterPlayAdvance();
+      renderAll();
+    });
+  });
+
+  // UI buttons
+  $('newBtn').onclick = ()=> newGame();
+  $('drawBtn').onclick = ()=> playerDraw();
+  $('unoBtn').onclick = ()=> { if(state.hands[0].length===1){ log('UNO called!'); } else log('Not allowed now'); };
+
+  // initial
+  newGame();
+
+  window.addEventListener('resize', ()=>renderAll());
+  renderAll();
+
+  // expose for debugging in console (optional)
+  window.UNO_SINGLEFILE = state;
+})();
+</script>
+</body>
+</html>
